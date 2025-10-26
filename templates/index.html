@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ERGODENT</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>
+    async function fetchWarnings() {
+      const res = await fetch("/warnings");
+      const warnings = await res.json();
+      const container = document.getElementById("warnings-container");
+      if (!container) return;
+      container.innerHTML = "";
+      if (warnings.length === 0) {
+        container.innerHTML = '<div class="warning-card warning-safe">No warnings</div>';
+      } else {
+        warnings.forEach((w, i) => {
+          let cls = w.includes("DOCTOR") ? "warning-doctor" : "warning-patient";
+          let div = document.createElement("div");
+          div.className = `warning-card ${cls}`;
+          div.style.animationDelay = `${i * 0.2}s`;
+          div.innerText = w;
+          container.appendChild(div);
+        });
+      }
+    }
+    setInterval(fetchWarnings, 2000);
+  </script>
+</head>
+<body>
+
+{% if not camera_on and not video_mode and not upload_mode %}
+  <!-- WELCOME PAGE -->
+  <div id="welcome-screen" class="welcome-screen">
+    <h1 class="app-title">ERGODENT</h1>
+    <p class="subtitle">Welcome Doctor!</p>
+
+    <div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center;">
+      <a href="{{ url_for('start_camera') }}" class="btn start">Start Camera</a>
+      <a href="{{ url_for('choose_upload') }}" class="btn start">Upload Video</a>
+    </div>
+
+    <!-- IP Webcam URL Input -->
+    <div style="margin-top:20px;">
+      <form action="{{ url_for('start_ip_camera') }}" method="POST" style="text-align:center;">
+        <input type="text" name="ip_url" placeholder="Enter IP Camera URL" style="width:150px; padding:8px;"
+               value="{{ last_ip_url }}" required>
+        <button type="submit" class="btn start">Start with Maxilla</button>
+      </form>
+    </div>
+  </div>
+
+{% else %}
+  <!-- MAIN APP -->
+  <div id="main-app" class="main-app">
+    <header class="app-header">
+      <h1>ERGODENT</h1>
+    </header>
+
+    <div class="app-content">
+      <!-- Left: video feed or upload form -->
+      <div class="video-panel glass-container">
+
+        {% if camera_on %}
+          <img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Live Camera Feed">
+          <div class="overlay-info">Live Camera Feed</div>
+
+        {% elif video_mode %}
+          <img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Uploaded Video Feed">
+          <div class="overlay-info">Uploaded Video Feed</div>
+
+        {% elif upload_mode %}
+          <!-- Show upload form -->
+          <form action="{{ url_for('upload_video') }}" method="POST" enctype="multipart/form-data" style="text-align:center;">
+            <p>Select a video file to analyze:</p>
+            <input type="file" name="video" accept="video/*" required>
+            <button type="submit" class="btn start" style="margin-top:10px;">Run Uploaded Video</button>
+          </form>
+
+        {% else %}
+          <div class="camera-off">Camera/Video is Off</div>
+        {% endif %}
+
+        <div class="controls">
+          <a href="{{ url_for('stop_camera') }}" class="btn stop">Stop</a>
+          <a href="{{ url_for('start_maxilla') }}" class="btn start">Maxilla</a>
+          <a href="{{ url_for('start_mandible') }}" class="btn start">Mandible</a>
+        </div>
+      </div>
+
+      <!-- Right: warnings panel -->
+      <div class="warnings-panel glass-container">
+        <h2>Warnings</h2>
+        <div id="warnings-container">
+          <div class="warning-card warning-safe">No warnings</div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+</body>
+</html>
