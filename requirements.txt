@@ -1,6 +1,6 @@
-Flask
-opencv-python
-mediapipe
-ultralytics
-pyttsx3
-numpy
+Flask==3.1.2
+opencv-python==4.12.0.88
+mediapipe==0.10.13
+ultralytics==8.1.0
+pyttsx3==2.90
+numpy==1.26.0
