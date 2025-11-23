@@ -1,6 +1,8 @@
+python-3.9.13
 flask
 opencv-python-headless
 ultralytics
 mediapipe
 numpy
 gunicorn
+
