@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ERGODENT</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+{% if not camera_on and not video_mode and not upload_mode %}
+  <!-- WELCOME PAGE -->
+  <div id="welcome-screen" class="welcome-screen">
+    <h1 class="app-title">ERGODENT</h1>
+    <p class="subtitle">Welcome Doctor!</p>
+
+    <div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center;">
+      <!-- "Start Camera" now triggers JS webcam logic, but since we are on welcome screen, 
+           we might want to redirect to main app first or handle it here. 
+           For simplicity, let's keep the flow: 
+           The user clicks "Start Camera", it goes to /start_camera (server), 
+           which renders index.html with camera_on=True.
+           Then our JS detects this and starts the webcam.
+      -->
+      <a href="{{ url_for('start_camera') }}" class="btn start">Start Camera</a>
+      <a href="{{ url_for('choose_upload') }}" class="btn start">Upload Video</a>
+    </div>
+
+    <!-- IP Webcam URL Input -->
+    <div style="margin-top:20px;">
+      <form action="{{ url_for('start_ip_camera') }}" method="POST" style="text-align:center;">
+        <input type="text" name="ip_url" placeholder="Enter IP Camera URL" style="width:150px; padding:8px;"
+               value="{{ last_ip_url }}" required>
+        <button type="submit" class="btn start">Start with Maxilla</button>
+      </form>
+    </div>
+  </div>
+
+{% else %}
+  <!-- MAIN APP -->
+  <div id="main-app" class="main-app">
+    <header class="app-header">
+      <h1>ERGODENT</h1>
+    </header>
+
+    <div class="app-content">
+      <!-- Left: video feed or upload form -->
+      <div class="video-panel glass-container">
+
+        <!-- Hidden elements for processing -->
+        <video id="webcam-video" autoplay playsinline style="display:none;"></video>
+        <canvas id="webcam-canvas" style="display:none;"></canvas>
+
+        <!-- Display Area -->
+        <!-- If camera_on is True, we show the feed. 
+             If video_mode is True, we show the server feed (uploaded video). -->
+        {% if camera_on %}
+            <img id="camera-feed" src="" alt="Live Camera Feed" style="display:block; width:100%; max-width:640px;">
+            <div class="overlay-info" id="status-overlay">Initializing Webcam...</div>
+        {% elif video_mode %}
+            <img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Uploaded Video Feed" style="display:block; width:100%; max-width:640px;">
+            <div class="overlay-info">Uploaded Video Feed</div>
+        {% elif upload_mode %}
+            <!-- Show upload form -->
+            <div id="upload-form-container">
+                <form action="{{ url_for('upload_video') }}" method="POST" enctype="multipart/form-data" style="text-align:center;">
+                    <p>Select a video file to analyze:</p>
+                    <input type="file" name="video" accept="video/*" required>
+                    <button type="submit" class="btn start" style="margin-top:10px;">Run Uploaded Video</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="camera-off">Camera/Video is Off</div>
+        {% endif %}
+
+        <div class="controls">
+          <a href="{{ url_for('stop_camera') }}" class="btn stop">Stop</a>
+          <!-- These buttons can remain, or we can make them trigger JS if needed. 
+               For now, let's assume they redirect and set state. -->
+          <a href="{{ url_for('start_maxilla') }}" class="btn start">Maxilla</a>
+          <a href="{{ url_for('start_mandible') }}" class="btn start">Mandible</a>
+        </div>
+      </div>
+
+      <!-- Right: warnings panel -->
+      <div class="warnings-panel glass-container">
+        <h2>Warnings</h2>
+        <div id="warnings-container">
+          <div class="warning-card warning-safe">No warnings</div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+<script>
+  let videoStream = null;
+  let processingInterval = null;
+  const video = document.getElementById('webcam-video');
+  const canvas = document.getElementById('webcam-canvas');
+  const displayImg = document.getElementById('camera-feed');
+  const statusOverlay = document.getElementById('status-overlay');
+  
+  // Audio vars
+  let lastSpokenWarnings = new Set();
+  const SPEAK_COOLDOWN = 5000; // 5 seconds
+  let lastSpeakTime = {};
+
+  // Check if we should start the webcam automatically (when camera_on is True)
+  const shouldStartWebcam = {{ 'true' if camera_on else 'false' }};
+
+  window.onload = function() {
+      if (shouldStartWebcam) {
+          startWebcam();
+      }
+      // Start polling for warnings if we are in video_mode (uploaded video)
+      // For webcam mode, we get warnings in the response.
+      {% if video_mode %}
+        setInterval(fetchWarningsOnly, 2000);
+      {% endif %}
+  };
+
+  async function startWebcam() {
+    try {
+      videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (video) {
+          video.srcObject = videoStream;
+      }
+      
+      if (statusOverlay) statusOverlay.innerText = "Web Camera Active";
+      if (displayImg) displayImg.style.display = "block";
+
+      // Start processing loop
+      if (processingInterval) clearInterval(processingInterval);
+      processingInterval = setInterval(processFrame, 200); // 5 FPS
+      
+    } catch (err) {
+      console.error("Error accessing webcam:", err);
+      alert("Could not access webcam. Please allow camera permissions.");
+      if (statusOverlay) statusOverlay.innerText = "Camera Access Denied";
+    }
+  }
+
+  function stopCamera() {
+    if (videoStream) {
+      videoStream.getTracks().forEach(track => track.stop());
+      videoStream = null;
+    }
+    if (processingInterval) {
+      clearInterval(processingInterval);
+      processingInterval = null;
+    }
+  }
+
+  async function processFrame() {
+    if (!videoStream || !video || !canvas) return;
+
+    // Draw video frame to canvas
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Convert to base64
+    const imageData = canvas.toDataURL('image/jpeg', 0.7);
+
+    try {
+      const res = await fetch('/process_frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageData })
+      });
+      
+      const data = await res.json();
+      
+      if (data.image && displayImg) {
+        displayImg.src = data.image;
+      }
+      
+      updateWarnings(data.warnings);
+
+    } catch (err) {
+      console.error("Error processing frame:", err);
+    }
+  }
+
+  // For uploaded video mode, we still need to fetch warnings separately
+  async function fetchWarningsOnly() {
+      try {
+          const res = await fetch("/warnings");
+          const warnings = await res.json();
+          updateWarnings(warnings);
+      } catch (e) {
+          console.error("Error fetching warnings:", e);
+      }
+  }
+
+  function speak(text) {
+    const now = Date.now();
+    if (lastSpeakTime[text] && (now - lastSpeakTime[text] < SPEAK_COOLDOWN)) {
+      return;
+    }
+    lastSpeakTime[text] = now;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function updateWarnings(warnings) {
+      const container = document.getElementById("warnings-container");
+      if (!container) return;
+      
+      container.innerHTML = "";
+      
+      if (!warnings || warnings.length === 0) {
+        container.innerHTML = '<div class="warning-card warning-safe">No warnings</div>';
+      } else {
+        warnings.forEach((w, i) => {
+          let cls = w.includes("DOCTOR") ? "warning-doctor" : "warning-patient";
+          let div = document.createElement("div");
+          div.className = `warning-card ${cls}`;
+          div.style.animationDelay = `${i * 0.2}s`;
+          div.innerText = w;
+          container.appendChild(div);
+
+          // Speak logic
+          let speechText = "";
+          if (w.includes("Neck")) speechText = "Please correct your neck posture.";
+          else if (w.includes("Back")) speechText = "Please correct your back posture.";
+          else if (w.includes("arm") || w.includes("Arm")) speechText = "Your right arm is not aligned properly.";
+          
+          if (speechText) speak(speechText);
+        });
+      }
+  }
+</script>
+</body>
+</html>
