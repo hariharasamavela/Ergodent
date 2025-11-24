@@ -1,6 +1,6 @@
-flask
+Flask
+gunicorn
 opencv-python-headless
+numpy
 ultralytics
 mediapipe
-numpy
-gunicorn
